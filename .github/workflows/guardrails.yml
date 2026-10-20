@@ -1,0 +1,27 @@
+name: guardrails
+
+# Wake up when a pull request is opened or updated, and when main changes
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The robot may only read the code, nothing else (least privilege)
+permissions:
+  contents: read
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: Run all guardrail checks
+        run: ./scripts/check.sh
