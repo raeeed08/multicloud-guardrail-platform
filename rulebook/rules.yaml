@@ -1,0 +1,23 @@
+# One rulebook, enforced at two points: PREVENT (CI policies) and DETECT (copilot scanner).
+rules:
+  - id: NET-001
+    title: No SSH or RDP open to the internet
+    severity: high
+    description: >
+      Remote administration ports (22 for SSH, 3389 for RDP) must not accept
+      traffic from any internet address.
+    why: >
+      Internet-wide exposure of these ports is a common entry point for
+      brute-force and credential-stuffing attacks.
+    applies_to:
+      azure:
+        - azurerm_network_security_group (security_rule blocks)
+        - azurerm_network_security_rule
+      aws:
+        - aws_security_group (ingress blocks)
+        - aws_security_group_rule
+    fix_hint: >
+      Restrict the source to a trusted address range, or remove the rule and
+      use a managed access service instead of exposing the port.
+    prevent: policies/<cloud>/net_001.rego
+    detect: copilot network scanner (to be added)
