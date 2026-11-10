@@ -1,0 +1,7 @@
+# Keep every default gitleaks rule; the policy fixtures are deliberately insecure examples, never deployed.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deliberately insecure Terraform examples used to test the policies"
+paths = ['''^tests/fixtures/''']
