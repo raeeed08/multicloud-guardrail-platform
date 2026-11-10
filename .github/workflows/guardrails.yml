@@ -79,6 +79,17 @@ jobs:
           docker run --rm -v "$PWD":/project -w /project openpolicyagent/conftest:v0.71.1 \
             test --parser hcl2 --all-namespaces -p policies --no-color "${files[@]}"
 
+  python:
+    name: Python tooling (ruff + AI fix loop tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: ruff
+        run: uv run --group dev ruff check scripts tools && uv run --group dev ruff format --check scripts tools
+      - name: pytest
+        run: uv run --group dev pytest -q
+
   checkov:
     name: Checkov (results in the Security tab)
     runs-on: ubuntu-latest
