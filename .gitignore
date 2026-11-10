@@ -11,3 +11,9 @@ crash.log
 
 # Lock files are committed for root configurations (envs/) only
 modules/**/.terraform.lock.hcl
+
+# Python
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/

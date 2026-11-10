@@ -36,9 +36,20 @@ RULE_ID = re.compile(r"\b([A-Z]{2,4}-\d{3})\b")
 
 def conftest(*args: str) -> subprocess.CompletedProcess[str]:
     base = os.environ.get("CONFTEST")
-    cmd = shlex.split(base) if base else [
-        "docker", "run", "--rm", "-v", f"{ROOT}:/project", "-w", "/project", "openpolicyagent/conftest:v0.71.1",
-    ]
+    cmd = (
+        shlex.split(base)
+        if base
+        else [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{ROOT}:/project",
+            "-w",
+            "/project",
+            "openpolicyagent/conftest:v0.71.1",
+        ]
+    )
     return subprocess.run([*cmd, *args], cwd=ROOT, capture_output=True, text=True, check=False)
 
 
@@ -57,7 +68,7 @@ def expectations(path: Path) -> tuple[set[str], Counter[str]]:
 
 def load_rulebook() -> list[dict]:
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml  # noqa: PLC0415 - optional dependency, imported only when available
     except ImportError:  # the coverage check is skipped rather than failing on a missing dependency
         print("  (PyYAML not installed: rulebook coverage check skipped)")
         return []

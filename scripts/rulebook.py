@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate rulebook/rules.yaml and generate docs/rules.md from it.
 
-    python scripts/rulebook.py           # validate + write docs/rules.md
-    python scripts/rulebook.py --check   # validate + fail if docs/rules.md is out of date (CI)
+python scripts/rulebook.py           # validate + write docs/rules.md
+python scripts/rulebook.py --check   # validate + fail if docs/rules.md is out of date (CI)
 """
 
 from __future__ import annotations
@@ -54,9 +54,11 @@ def render(rules: list[dict]) -> str:
         "",
         "Generated from `rulebook/rules.yaml` by `scripts/rulebook.py`. Do not edit by hand.",
         "",
-        "Each rule is enforced at up to three points: **Prevent** (policy on the Terraform code in the pull "
-        "request), **Guard** (Azure Policy / AWS SCP in the cloud control plane) and **Detect** (Cloud Copilot "
-        "scanning the running account).",
+        (
+            "Each rule is enforced at up to three points: **Prevent** (policy on the Terraform code in the pull "
+            "request), **Guard** (Azure Policy / AWS SCP in the cloud control plane) and **Detect** (Cloud Copilot "
+            "scanning the running account)."
+        ),
         "",
         "| ID | Rule | Severity | Prevent (AWS) | Prevent (Azure) | Guard | Detect (Cloud Copilot) |",
         "|---|---|---|---|---|---|---|",
@@ -65,9 +67,9 @@ def render(rules: list[dict]) -> str:
         prevent = r.get("prevent") or {}
         guard = "; ".join(f"{c.upper()}: {g}" for c, g in (r.get("guard") or {}).items()) or "-"
         detect = ", ".join((r.get("detect") or {}).get("copilot", [])) or "-"
-        cell = lambda c: f"`{Path(prevent[c]['policy']).name}`" if c in prevent else "-"  # noqa: E731
+        aws, azure = (f"`{Path(prevent[c]['policy']).name}`" if c in prevent else "-" for c in ("aws", "azure"))
         out.append(
-            f"| [{r['id']}](#{r['id'].lower()}) | {r['title']} | {r['severity']} | {cell('aws')} | {cell('azure')} "
+            f"| [{r['id']}](#{r['id'].lower()}) | {r['title']} | {r['severity']} | {aws} | {azure} "
             f"| {guard} | {detect} |"
         )
     for r in rules:
@@ -81,7 +83,9 @@ def render(rules: list[dict]) -> str:
         if detect := (r.get("detect") or {}).get("copilot"):
             out.append(f"- Detect: Cloud Copilot {', '.join(detect)}")
         if fw := r.get("frameworks"):
-            out.append("- Frameworks: " + "; ".join(f"{k.upper().replace('_', ' ')} {', '.join(v)}" for k, v in fw.items()))
+            out.append(
+                "- Frameworks: " + "; ".join(f"{k.upper().replace('_', ' ')} {', '.join(v)}" for k, v in fw.items())
+            )
     return "\n".join(out) + "\n"
 
 

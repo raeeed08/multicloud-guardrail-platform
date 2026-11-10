@@ -1,0 +1,26 @@
+# pip install pre-commit && pre-commit install   (runs on every git commit)
+repos:
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.99.0
+    hooks:
+      - id: terraform_fmt
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+  - repo: local
+    hooks:
+      - id: rulebook
+        name: rulebook valid, docs/rules.md up to date
+        entry: python3 scripts/rulebook.py --check
+        language: python
+        additional_dependencies: [pyyaml==6.0.2]
+        files: ^(rulebook/|docs/rules.md|policies/)
+        pass_filenames: false
+      - id: policy-tests
+        name: policies catch exactly the insecure fixtures
+        entry: python3 scripts/test_policies.py
+        language: python
+        additional_dependencies: [pyyaml==6.0.2]
+        files: ^(policies/|tests/fixtures/|rulebook/)
+        pass_filenames: false

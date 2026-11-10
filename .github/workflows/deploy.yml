@@ -1,0 +1,183 @@
+name: deploy
+
+# Manual, reviewed deployment with NO stored cloud secret:
+#   GitHub issues a short-lived OIDC token -> AWS STS / Entra ID exchange it for temporary credentials
+#   (trust pinned to this repository AND the GitHub environment, see modules/*/github-oidc).
+# The plan job runs first; "apply" needs the protected environment "<env>-apply" (required reviewers).
+#
+# Configuration lives in GitHub environment VARIABLES (not secrets, none of them is sensitive):
+#   azure: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, TFSTATE_RESOURCE_GROUP, TFSTATE_STORAGE_ACCOUNT
+#   aws:   AWS_ROLE_ARN, AWS_REGION, TFSTATE_BUCKET
+# Bootstrap: the very first apply (which creates the OIDC identity itself) is run once by an administrator.
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Which stack
+        type: choice
+        options: [azure-dev, aws-dev]
+      action:
+        description: plan only, or plan then apply (after approval)
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  contents: read
+  id-token: write # request the OIDC token
+
+concurrency:
+  group: deploy-${{ inputs.stack }} # never two runs on the same state
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: 1.17.1
+  TF_IN_AUTOMATION: "1"
+  STACK_DIR: envs/${{ inputs.stack }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      changes: ${{ steps.plan.outputs.exitcode == '2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check configuration
+        run: |
+          missing=()
+          if [ "${{ inputs.stack }}" = "azure-dev" ]; then
+            for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID TFSTATE_RESOURCE_GROUP TFSTATE_STORAGE_ACCOUNT; do
+              [ -n "${!v}" ] || missing+=("$v")
+            done
+          else
+            for v in AWS_ROLE_ARN AWS_REGION TFSTATE_BUCKET; do [ -n "${!v}" ] || missing+=("$v"); done
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing environment variables: ${missing[*]} (see the comment at the top of deploy.yml)"
+            exit 1
+          fi
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
+
+      - name: Azure login (OIDC)
+        if: inputs.stack == 'azure-dev'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: AWS credentials (OIDC)
+        if: inputs.stack == 'aws-dev'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gh-${{ github.run_id }}
+
+      - name: terraform init (remote state)
+        run: |
+          if [ "${{ inputs.stack }}" = "azure-dev" ]; then
+            terraform -chdir="$STACK_DIR" init -input=false \
+              -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+              -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+              -backend-config="container_name=tfstate" \
+              -backend-config="key=${{ inputs.stack }}.tfstate" \
+              -backend-config="use_azuread_auth=true" -backend-config="use_oidc=true"
+          else
+            terraform -chdir="$STACK_DIR" init -input=false \
+              -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" \
+              -backend-config="key=${{ inputs.stack }}/terraform.tfstate" \
+              -backend-config="region=${{ vars.AWS_REGION }}" \
+              -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+          fi
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform -chdir="$STACK_DIR" plan -input=false -detailed-exitcode -out=tfplan -no-color > plan.txt
+          code=$?
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          fence='```'
+          { echo "### Plan for ${{ inputs.stack }}"; echo "$fence"; tail -c 60000 plan.txt; echo "$fence"; } >> "$GITHUB_STEP_SUMMARY"
+          [ $code -ne 1 ]
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.stack }}
+          path: ${{ env.STACK_DIR }}/tfplan
+          retention-days: 3
+
+  apply:
+    needs: plan
+    if: inputs.action == 'apply' && needs.plan.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    environment: dev-apply # protected: required reviewers approve the plan shown in the summary
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.stack }}
+          path: ${{ env.STACK_DIR }}
+      - name: Azure login (OIDC)
+        if: inputs.stack == 'azure-dev'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: AWS credentials (OIDC)
+        if: inputs.stack == 'aws-dev'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gh-${{ github.run_id }}
+      - name: terraform apply (exactly the reviewed plan)
+        run: |
+          if [ "${{ inputs.stack }}" = "azure-dev" ]; then
+            terraform -chdir="$STACK_DIR" init -input=false \
+              -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+              -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+              -backend-config="container_name=tfstate" -backend-config="key=${{ inputs.stack }}.tfstate" \
+              -backend-config="use_azuread_auth=true" -backend-config="use_oidc=true"
+          else
+            terraform -chdir="$STACK_DIR" init -input=false \
+              -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="key=${{ inputs.stack }}/terraform.tfstate" \
+              -backend-config="region=${{ vars.AWS_REGION }}" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+          fi
+          terraform -chdir="$STACK_DIR" apply -input=false tfplan
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}

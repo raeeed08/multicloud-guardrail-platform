@@ -1,7 +1,5 @@
 # Secretless CI/CD (IAM-002): GitHub Actions presents a short-lived OIDC token and assumes this role.
 # Trust is pinned to the repository AND the GitHub environment, so a fork or another branch cannot use it.
-data "aws_partition" "current" {}
-
 resource "aws_iam_openid_connect_provider" "github" {
   count          = var.create_oidc_provider ? 1 : 0
   url            = "https://token.actions.githubusercontent.com"

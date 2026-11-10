@@ -1,27 +1,113 @@
 name: guardrails
 
-# Wake up when a pull request is opened or updated, and when main changes
+# PREVENT layer: every pull request must pass every check before it can be merged.
 on:
   pull_request:
   push:
     branches: [main]
 
-# The robot may only read the code, nothing else (least privilege)
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: 1.17.1
+  TF_IN_AUTOMATION: "1"
+
 jobs:
-  guardrails:
+  static:
+    name: Format, rulebook, tflint
     runs-on: ubuntu-latest
     steps:
-      - name: Get the code
-        uses: actions/checkout@v4
-
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.16.6
+          terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.2
+      - name: Rulebook valid and docs/rules.md up to date
+        run: python scripts/rulebook.py --check
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.66.0
+      - name: tflint (AWS + Azure rulesets)
+        run: ./scripts/tflint.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # plugin downloads without rate limits
 
-      - name: Run all guardrail checks
-        run: ./scripts/check.sh
+  terraform:
+    name: Validate + terraform test
+    runs-on: ubuntu-latest
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-providers-${{ hashFiles('envs/**/.terraform.lock.hcl') }}
+      - name: Validate environments, test modules (mock providers, no cloud credentials)
+        run: ./scripts/tf_test.sh
+
+  policies:
+    name: Policy tests + self-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.2
+      - name: Policies catch exactly the insecure fixtures
+        run: python scripts/test_policies.py
+      - name: The landing zone passes its own rules
+        run: |
+          mapfile -t files < <(find modules envs -name '*.tf')
+          docker run --rm -v "$PWD":/project -w /project openpolicyagent/conftest:v0.71.1 \
+            test --parser hcl2 --all-namespaces -p policies --no-color "${files[@]}"
+
+  checkov:
+    name: Checkov (results in the Security tab)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          skip_path: tests/fixtures
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          quiet: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('results.sarif') != ''
+        with:
+          sarif_file: results.sarif
+          category: checkov
+
+  secrets:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

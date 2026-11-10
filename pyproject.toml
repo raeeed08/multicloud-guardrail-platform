@@ -1,0 +1,24 @@
+# Python tooling for the repository scripts (rulebook, policy tests, AI fixer). Not a package.
+[project]
+name = "guardrail-platform-tools"
+version = "2.0.0"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6.0"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "PL", "RUF"]
+ignore = ["S603", "S607", "PLR2004", "PLR0913", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/test_*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tools"]
+pythonpath = ["tools"]
