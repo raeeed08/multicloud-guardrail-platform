@@ -5,6 +5,9 @@
 tfplan
 crash.log
 *.tfvars
-!dev.tfvars.example
+!*.tfvars.example
 .azure/
 .env
+
+# Lock files are committed for root configurations (envs/) only
+modules/**/.terraform.lock.hcl

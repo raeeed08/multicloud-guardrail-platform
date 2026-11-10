@@ -1,0 +1,6 @@
+subscription_id   = "00000000-0000-0000-0000-000000000000"
+security_email    = "security@example.com"
+github_repository = "raeeed08/multicloud-guardrail-platform"
+# Production-like values:
+# defender_plans      = ["VirtualMachines", "StorageAccounts", "KeyVaults", "Arm"]
+# storage_replication = "ZRS"

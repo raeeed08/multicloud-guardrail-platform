@@ -1,0 +1,5 @@
+region            = "eu-west-1"
+owner             = "raed"
+github_repository = "raeeed08/multicloud-guardrail-platform"
+# enable_nat   = true   # private workloads that need internet egress (~32 USD/month)
+# security_hub = true   # CIS v3.0 checks in Security Hub (billed)

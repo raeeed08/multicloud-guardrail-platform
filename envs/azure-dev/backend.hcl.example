@@ -1,0 +1,7 @@
+# Remote state in a dedicated, locked-down storage account (create it once, outside this stack).
+# Locking is native (blob lease). Authentication uses Entra ID, not account keys.
+resource_group_name  = "rg-tfstate"
+storage_account_name = "sttfstateXXXXXX"
+container_name       = "tfstate"
+key                  = "azure-dev.tfstate"
+use_azuread_auth     = true
